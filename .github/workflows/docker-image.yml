@@ -15,4 +15,4 @@ jobs:
       with:
         build-args: "PLATFORM=storage"
         file: Dockerfile
-        tags: robert-oleynik/storage-service:$(date +%s)
+        tags: robert-oleynik/storage-service
