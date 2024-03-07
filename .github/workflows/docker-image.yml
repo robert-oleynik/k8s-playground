@@ -15,4 +15,4 @@ jobs:
       with:
         build-args: "PACKAGE=storage"
         file: Dockerfile
-        tags: robert-oleynik/storage-service
+        tags: robert-oleynik/snippets:storage-service
