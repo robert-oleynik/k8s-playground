@@ -29,5 +29,5 @@ jobs:
         build-args: "PACKAGE=storage"
         file: Dockerfile
         push: true
-        tags: ${{ steps.meta.output.tags }}
+        tags: ${{ steps.meta.outputs.tags }}
         labels: ${{ steps.meta.outputs.labels }}
