@@ -1,4 +1,4 @@
-module github.com/robert-oleynik/snippets/raft-test
+module github.com/robert-oleynik/k8s-playground/raft-test
 
 go 1.22.1
 

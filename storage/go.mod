@@ -1,4 +1,4 @@
-module github.com/robert-oleynik/snippets/storage
+module github.com/robert-oleynik/k8s-playground/storage
 
 go 1.22.1
 

@@ -6,16 +6,28 @@ import (
 )
 
 type Config struct {
-	Addr string
+	QueueSize int
 
 	ElectionTimeoutMin time.Duration
 	ElectionTimeoutMax time.Duration
+	HeartbeatPeriod    time.Duration
 }
 
 func DefaultConfig() Config {
 	return Config{
+		QueueSize:          128,
 		ElectionTimeoutMin: 150 * time.Millisecond,
 		ElectionTimeoutMax: 250 * time.Millisecond,
+		HeartbeatPeriod:    100 * time.Millisecond,
+	}
+}
+
+func DebugConfig() Config {
+	return Config{
+		QueueSize:          128,
+		ElectionTimeoutMin: 10 * time.Second,
+		ElectionTimeoutMax: 30 * time.Second,
+		HeartbeatPeriod:    5 * time.Second,
 	}
 }
 
