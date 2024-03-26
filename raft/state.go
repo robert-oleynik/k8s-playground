@@ -9,9 +9,9 @@ type StateManager interface {
 	Apply(command interface{}) error
 }
 
-type LogManager interface {
+type LogManager[T interface{}] interface {
 	// Append new entries starting at given position. May overwrite existing ones.
-	Append(i uint64, entries []LogEntry) error
+	Append(i uint64, entries []LogEntry[T]) error
 	// Set last logged entry to provided logged index.
 	Commit(logIndex uint64) error
 	// Commited index
@@ -24,27 +24,27 @@ type LogManager interface {
 	LastLogIndex() (uint64, error)
 }
 
-type LogEntry struct {
+type LogEntry[T interface{}] struct {
 	Term     uint32
 	LogIndex uint64
-	Command  interface{}
+	Command  T
 }
 
-type InMemoryLog struct {
+type InMemoryLog[T interface{}] struct {
 	mtx      *sync.RWMutex
-	Entries  []LogEntry
+	Entries  []LogEntry[T]
 	Commited uint
 }
 
-func NewDevelopmentLog() *InMemoryLog {
-	return &InMemoryLog{
+func NewDevelopmentLog[T interface{}]() *InMemoryLog[T] {
+	return &InMemoryLog[T]{
 		mtx:      &sync.RWMutex{},
-		Entries:  []LogEntry{},
+		Entries:  []LogEntry[T]{},
 		Commited: 0,
 	}
 }
 
-func (log *InMemoryLog) Append(i uint64, entries []LogEntry) error {
+func (log *InMemoryLog[T]) Append(i uint64, entries []LogEntry[T]) error {
 	log.mtx.Lock()
 	copy(log.Entries[i:], entries[:len(entries[i:])])
 	log.Entries = append(log.Entries, entries[len(entries[i:]):]...)
@@ -52,7 +52,7 @@ func (log *InMemoryLog) Append(i uint64, entries []LogEntry) error {
 	return nil
 }
 
-func (log *InMemoryLog) Commit(logIndex uint64) error {
+func (log *InMemoryLog[T]) Commit(logIndex uint64) error {
 	log.mtx.Lock()
 	defer log.mtx.Unlock()
 	if int(logIndex) >= len(log.Entries) {
@@ -62,14 +62,14 @@ func (log *InMemoryLog) Commit(logIndex uint64) error {
 	return nil
 }
 
-func (log *InMemoryLog) Validate(index uint64, term uint32) bool {
+func (log *InMemoryLog[T]) Validate(index uint64, term uint32) bool {
 	if len(log.Entries) < int(index) {
 		return false
 	}
 	return log.Entries[index].Term == term
 }
 
-func (log *InMemoryLog) LastTerm() (uint32, error) {
+func (log *InMemoryLog[T]) LastTerm() (uint32, error) {
 	log.mtx.RLock()
 	defer log.mtx.RUnlock()
 	if len(log.Entries) == 0 {
@@ -78,7 +78,7 @@ func (log *InMemoryLog) LastTerm() (uint32, error) {
 	return log.Entries[len(log.Entries)-1].Term, nil
 }
 
-func (log *InMemoryLog) LastLogIndex() (uint64, error) {
+func (log *InMemoryLog[T]) LastLogIndex() (uint64, error) {
 	log.mtx.RLock()
 	defer log.mtx.RUnlock()
 	if len(log.Entries) == 0 {
@@ -87,7 +87,7 @@ func (log *InMemoryLog) LastLogIndex() (uint64, error) {
 	return log.Entries[len(log.Entries)-1].LogIndex, nil
 }
 
-func (log *InMemoryLog) CommitedIndex() uint64 {
+func (log *InMemoryLog[T]) CommitedIndex() uint64 {
 	log.mtx.RLock()
 	defer log.mtx.RUnlock()
 	return uint64(log.Commited)

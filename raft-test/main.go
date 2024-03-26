@@ -4,6 +4,7 @@ import (
 	"log"
 	"net"
 	"os"
+	"strconv"
 
 	"github.com/robert-oleynik/k8s-playground/raft"
 	"go.uber.org/zap"
@@ -13,9 +14,8 @@ type State struct {
 	Value int
 }
 
-func (state *State) Apply(command interface{}) error {
-	value := command.(int)
-	state.Value = value
+func (state *State) Apply(command int) error {
+	state.Value = command
 	return nil
 }
 
@@ -27,21 +27,38 @@ func main() {
 	defer logger.Sync()
 	zap.ReplaceGlobals(logger)
 
-	addr := os.Getenv("ADDR")
-	peer1 := os.Getenv("PEER1")
-	peer2 := os.Getenv("PEER2")
-	peers := []string{}
-	if peer1 != "" {
-		peers = append(peers, peer1)
+	idx, err := strconv.Atoi(os.Getenv("IDX"))
+	if err != nil {
+		logger.Fatal("err", zap.Error(err))
 	}
-	if peer2 != "" {
-		peers = append(peers, peer2)
+
+	host := "127.0.0.1"
+	ports := []uint16{5000, 5001, 5002}
+	peers := raft.NewPeers(host, ports[idx])
+
+	joined := false
+	for i, port := range ports {
+		if i == idx {
+			continue
+		}
+		addr := raft.PeerAddr{Host: host, Port: port}
+		peer := raft.Peer{Id: 0, Addr: addr}
+		if err := peers.Join(peer); err != nil {
+			zap.L().Error("failed to join raft cluster",
+				zap.Error(err))
+		}
+		joined = true
+		break
 	}
-	r := raft.NewWithConfig(raft.DebugConfig())
-	r.Log = raft.NewDevelopmentLog()
-	r.Peer = raft.NewDevelopmentPeers(peers)
-	zap.L().Sugar().Infof("listening on %s", addr)
-	listener, err := net.Listen("tcp", addr)
+	if !joined {
+		panic("failed to join raft cluster")
+	}
+
+	r := raft.NewWithConfig[int](raft.DebugConfig())
+	r.Peers = peers
+	r.Log = raft.NewDevelopmentLog[int]()
+	zap.L().Sugar().Infof("listening on %s:%d", host, ports[idx])
+	listener, err := net.Listen("tcp", r.Peers.Self.Addr.String())
 	if err != nil {
 		logger.Fatal("failed to listen for socket", zap.Error(err))
 	}
