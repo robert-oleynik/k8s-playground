@@ -86,11 +86,11 @@ func (raft *Raft[T]) Update(cmds []T) error {
 
 func (raft *Raft[T]) ServeHTTP(listener net.Listener) error {
 	server := rpc.NewServer()
-	if err := server.Register(raft); err != nil {
-		return fmt.Errorf("raft: register raft rpc server: %w", err)
-	}
-	if err := server.Register(&raft.Peers); err != nil {
+	if err := server.RegisterName("Peers", &raft.Peers); err != nil {
 		return fmt.Errorf("raft: register peers rpc server: %w", err)
+	}
+	if err := server.RegisterName("Raft", raft); err != nil {
+		return fmt.Errorf("raft: register raft rpc server: %w", err)
 	}
 	if err := http.Serve(listener, server); err != nil {
 		return fmt.Errorf("raft: launch http server: %w", err)
@@ -119,22 +119,24 @@ func (raft *Raft[T]) RequestVotesWithContext(ctx context.Context) (bool, error) 
 	raft.mtx.Unlock()
 
 	peerCount := raft.Peers.PeerCount()
-	zap.L().Debug("call", zap.Any("peerCOunt", peerCount))
 	replies := raft.Peers.Broadcast("Raft.RequestVote", req)
 	votes := 0
 	rejections := 0
+	done := ctx.Done()
 	for votes*2 < peerCount && rejections*2 <= peerCount {
 		select {
 		case call := <-replies:
-			zap.L().Debug("call", zap.Any("call", call))
 			if call == nil {
+				rejections++
+			} else if call.Error != nil {
+				zap.L().Error("request for vote failed", zap.Error(call.Error))
 				rejections++
 			} else if reply, ok := call.Reply.(*Reply); ok && reply.Success {
 				votes++
 			} else {
 				rejections++
 			}
-		case <-ctx.Done():
+		case <-done:
 			zap.L().Info("failed to gather votes before timeout",
 				zap.Duration("timeout", raft.electionTimeout))
 			return false, nil

@@ -132,7 +132,7 @@ func (peers *Peers) Broadcast(method string, req any) chan *rpc.Call {
 	done := make(chan *rpc.Call, len(peerList))
 	for _, peer := range peerList {
 		var reply Reply
-		if _, err := peer.Go(method, req, reply, done); err != nil {
+		if _, err := peer.Go(method, req, &reply, done); err != nil {
 			zap.L().Error("request failed", zap.String("method", method), zap.Error(err))
 			done <- nil
 		}
@@ -237,7 +237,7 @@ func (peer *Peer) Go(method string, request any, reply any, done chan *rpc.Call)
 		peer.client = client
 	}
 	peer.mtx.Unlock()
-	zap.L().Debug("request",
+	zap.L().Debug("rpc request",
 		zap.String("method", method),
 		zap.Any("request", request),
 		zap.String("addr", peer.Addr.String()))
