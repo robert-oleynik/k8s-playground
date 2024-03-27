@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"net"
 	"net/rpc"
 	"sync"
 
@@ -21,6 +20,15 @@ type Peer struct {
 	client *rpc.Client
 	Id     uint32
 	Addr   PeerAddr
+}
+
+func NewPeer(id uint32, host string, port uint16) Peer {
+	return Peer{
+		mtx:    &sync.Mutex{},
+		client: nil,
+		Id:     id,
+		Addr:   PeerAddr{Host: host, Port: port},
+	}
 }
 
 type Peers struct {
@@ -55,14 +63,13 @@ func (peers *Peers) Join(peer Peer) error {
 	var reply JoinReply
 	if err := peer.Call("Peers.RequestJoin", peers.Self, &reply); err != nil {
 		return fmt.Errorf("request join: %w", err)
-	}
-	if !reply.Success {
+	} else if !reply.Success {
 		return errors.New("join request rejected by peer")
 	}
 	for _, p := range reply.Peers {
 		if p.Addr.Host == peer.Addr.Host && p.Addr.Port == peer.Addr.Port {
 			peer.Id = p.Id
-			peers.peers = []Peer{p}
+			peers.peers = []Peer{peer}
 			break
 		}
 	}
@@ -72,6 +79,8 @@ func (peers *Peers) Join(peer Peer) error {
 		if p.Id == peer.Id {
 			continue
 		}
+		peer := NewPeer(p.Id, p.Addr.Host, p.Addr.Port)
+		var reply JoinReply
 		if err := peer.Call("Peers.RequestJoin", peers.Self, &reply); err != nil {
 			error = fmt.Errorf("failed to call peer: %w", err)
 			break
@@ -79,13 +88,17 @@ func (peers *Peers) Join(peer Peer) error {
 			error = errors.New("join request by peer")
 			break
 		}
+		zap.L().Info("peer added",
+			zap.Uint32("id", p.Id),
+			zap.String("host", p.Addr.Host),
+			zap.Uint16("port", p.Addr.Port))
+		peers.peers = append(peers.peers, peer)
 	}
 	if error != nil {
 		for _, peer := range peers.peers {
 			var reply struct{}
 			if err := peer.Call("Peers.NotifyLeave", peers.Self, &reply); err != nil {
-				zap.L().Error("failed to notify leave",
-					zap.Error(err))
+				zap.L().Error("failed to notify leave", zap.Error(err))
 			}
 		}
 	} else {
@@ -100,23 +113,51 @@ func (peers *Peers) Join(peer Peer) error {
 	return error
 }
 
+func (peers *Peers) PeerCount() int {
+	peers.mtx.RLock()
+	defer peers.mtx.RUnlock()
+	return len(peers.peers)
+}
+
 func (peers *Peers) GetPeers() []Peer {
 	result := []Peer{}
 	peers.mtx.RLock()
-	copy(result, peers.peers)
+	result = append(result, peers.peers...)
 	peers.mtx.RUnlock()
 	return result
+}
+
+func (peers *Peers) Broadcast(method string, req any) chan *rpc.Call {
+	peerList := peers.GetPeers()
+	done := make(chan *rpc.Call, len(peerList))
+	for _, peer := range peerList {
+		var reply Reply
+		if _, err := peer.Go(method, req, reply, done); err != nil {
+			zap.L().Error("request failed", zap.String("method", method), zap.Error(err))
+			done <- nil
+		}
+	}
+	return done
+}
+
+type PeerInfo struct {
+	Id   uint32
+	Addr PeerAddr
 }
 
 type JoinReply struct {
 	Success  bool
 	LeaderId uint32
-	Peers    []Peer
+	Peers    []PeerInfo
 }
 
-func (peers *Peers) RequestJoin(req Peer, reply *JoinReply) error {
-	req.mtx = &sync.Mutex{}
-	req.client = nil
+func (peers *Peers) RequestJoin(req PeerInfo, reply *JoinReply) error {
+	peer := Peer{
+		mtx:    &sync.Mutex{},
+		client: nil,
+		Id:     req.Id,
+		Addr:   req.Addr,
+	}
 
 	peers.mtx.Lock()
 	reply.Success = true
@@ -126,12 +167,20 @@ func (peers *Peers) RequestJoin(req Peer, reply *JoinReply) error {
 			break
 		}
 	}
-	reply.Success = reply.Success && req.Id == peers.Self.Id
+	reply.Success = reply.Success && req.Id != peers.Self.Id
 	if reply.Success {
-		copy(reply.Peers, peers.peers)
-		reply.Peers = append(reply.Peers, peers.Self)
-		peers.peers = append(peers.peers, req)
-		if peers.LeaderIdx == -1 {
+		for _, info := range peers.peers {
+			reply.Peers = append(reply.Peers, PeerInfo{
+				Id:   info.Id,
+				Addr: info.Addr,
+			})
+		}
+		reply.Peers = append(reply.Peers, PeerInfo{
+			Id:   peers.Self.Id,
+			Addr: peers.Self.Addr,
+		})
+		peers.peers = append(peers.peers, peer)
+		if peers.LeaderIdx != -1 {
 			reply.LeaderId = peers.peers[peers.LeaderIdx].Id
 		} else {
 			reply.LeaderId = 0
@@ -177,25 +226,32 @@ func (peers *Peers) NotifyLeave(req Peer, reply *struct{}) error {
 	return nil
 }
 
-func (peer *Peer) Call(method string, request any, reply any) error {
+func (peer *Peer) Go(method string, request any, reply any, done chan *rpc.Call) (*rpc.Call, error) {
 	peer.mtx.Lock()
 	if peer.client == nil {
 		client, err := rpc.DialHTTP("tcp", fmt.Sprintf(peer.Addr.String()))
 		if err != nil {
 			peer.mtx.Unlock()
-			return fmt.Errorf("http dial: %w", err)
+			return nil, fmt.Errorf("http dial: %w", err)
 		}
 		peer.client = client
 	}
 	peer.mtx.Unlock()
-	if err := peer.client.Call(method, request, reply); err != nil {
-		if nerr, ok := err.(net.Error); ok && !nerr.Timeout() {
-			peer.mtx.Lock()
-			peer.client = nil
-			peer.mtx.Unlock()
-		}
+	zap.L().Debug("request",
+		zap.String("method", method),
+		zap.Any("request", request),
+		zap.String("addr", peer.Addr.String()))
+	client := peer.client.Go(method, request, reply, done)
+	return client, client.Error
+}
+
+func (peer *Peer) Call(method string, request any, reply any) error {
+	call, err := peer.Go(method, request, reply, nil)
+	if err != nil {
+		return err
 	}
-	return nil
+	call = <-call.Done
+	return call.Error
 }
 
 func (addr *PeerAddr) String() string {

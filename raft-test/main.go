@@ -35,24 +35,19 @@ func main() {
 	host := "127.0.0.1"
 	ports := []uint16{5000, 5001, 5002}
 	peers := raft.NewPeers(host, ports[idx])
-
-	joined := false
 	for i, port := range ports {
 		if i == idx {
 			continue
 		}
-		addr := raft.PeerAddr{Host: host, Port: port}
-		peer := raft.Peer{Id: 0, Addr: addr}
+		zap.L().Info("join peer", zap.Int("idx", i))
+		peer := raft.NewPeer(0, host, port)
 		if err := peers.Join(peer); err != nil {
-			zap.L().Error("failed to join raft cluster",
-				zap.Error(err))
+			zap.L().Error("failed to join raft cluster", zap.Error(err))
+			continue
 		}
-		joined = true
 		break
 	}
-	if !joined {
-		panic("failed to join raft cluster")
-	}
+	zap.L().Info("join complete")
 
 	r := raft.NewWithConfig[int](raft.DebugConfig())
 	r.Peers = peers

@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"net"
@@ -88,7 +89,7 @@ func (raft *Raft[T]) ServeHTTP(listener net.Listener) error {
 	if err := server.Register(raft); err != nil {
 		return fmt.Errorf("raft: register raft rpc server: %w", err)
 	}
-	if err := server.Register(raft.Peers); err != nil {
+	if err := server.Register(&raft.Peers); err != nil {
 		return fmt.Errorf("raft: register peers rpc server: %w", err)
 	}
 	if err := http.Serve(listener, server); err != nil {
@@ -97,7 +98,7 @@ func (raft *Raft[T]) ServeHTTP(listener net.Listener) error {
 	return nil
 }
 
-func (raft *Raft[T]) RequestVotes() (bool, error) {
+func (raft *Raft[T]) RequestVotesWithContext(ctx context.Context) (bool, error) {
 	raft.mtx.Lock()
 	term, err := raft.Log.LastTerm()
 	if err != nil {
@@ -117,34 +118,29 @@ func (raft *Raft[T]) RequestVotes() (bool, error) {
 	}
 	raft.mtx.Unlock()
 
-	peers := raft.Peers.GetPeers()
-	replies := make(chan struct{}, len(peers))
-	for _, peer := range peers {
-		go func() {
-			var reply Reply
-			if err := peer.Call("Raft.RequestVote", req, reply); err != nil {
-				zap.L().Error("failed to request vote",
-					zap.Error(err))
-			} else if reply.Success {
-				replies <- struct{}{}
-			}
-		}()
-	}
-
-	timeout := time.After(raft.electionTimeout)
+	peerCount := raft.Peers.PeerCount()
+	zap.L().Debug("call", zap.Any("peerCOunt", peerCount))
+	replies := raft.Peers.Broadcast("Raft.RequestVote", req)
 	votes := 0
-	for votes*2 >= len(peers) {
+	rejections := 0
+	for votes*2 < peerCount && rejections*2 <= peerCount {
 		select {
-		case <-timeout:
-			zap.L().Warn("election timeout. No majority acquired.",
-				zap.Uint32("term", raft.term),
+		case call := <-replies:
+			zap.L().Debug("call", zap.Any("call", call))
+			if call == nil {
+				rejections++
+			} else if reply, ok := call.Reply.(*Reply); ok && reply.Success {
+				votes++
+			} else {
+				rejections++
+			}
+		case <-ctx.Done():
+			zap.L().Info("failed to gather votes before timeout",
 				zap.Duration("timeout", raft.electionTimeout))
 			return false, nil
-		case <-replies:
-			votes++
 		}
 	}
-	return true, nil
+	return votes*2 >= peerCount, nil
 }
 
 func (raft *Raft[T]) SendHeartbeet() error {
@@ -190,9 +186,13 @@ func (raft *Raft[T]) ElectNewLeader() error {
 		raft.votedFor = raft.id
 		raft.mtx.Unlock()
 
-		success, err := raft.RequestVotes()
+		ctx, cancel := context.WithTimeout(context.Background(), raft.electionTimeout)
+		defer cancel()
+		success, err := raft.RequestVotesWithContext(ctx)
 		if err != nil {
 			zap.L().Error("raft: failed requesting votes", zap.Error(err))
+			raft.mtx.Lock()
+			continue
 		}
 		zap.L().Debug("raft: election round complete",
 			zap.Bool("success", success),
