@@ -5,15 +5,11 @@ import (
 	"sync"
 )
 
-type StateManager interface {
-	Apply(command interface{}) error
-}
-
 type LogManager[T interface{}] interface {
 	// Append new entries starting at given position. May overwrite existing ones.
 	Append(i uint64, entries []LogEntry[T]) error
 	// Set last logged entry to provided logged index.
-	Commit(logIndex uint64) error
+	Commit(logIndex uint64) ([]LogEntry[T], error)
 	// Returns a list of indices after
 	History(lastLogIndex uint64) ([]LogEntry[T], error)
 	// Commited index
@@ -54,14 +50,16 @@ func (log *InMemoryLog[T]) Append(i uint64, entries []LogEntry[T]) error {
 	return nil
 }
 
-func (log *InMemoryLog[T]) Commit(logIndex uint64) error {
+func (log *InMemoryLog[T]) Commit(logIndex uint64) ([]LogEntry[T], error) {
+	var commited []LogEntry[T]
 	log.mtx.Lock()
 	defer log.mtx.Unlock()
 	if int(logIndex) > len(log.Entries) {
-		return errors.New("cannot commit non-existing entry")
+		return commited, errors.New("cannot commit non-existing entry")
 	}
+	commited = log.Entries[log.Commited:int(logIndex)]
 	log.Commited = uint(logIndex)
-	return nil
+	return commited, nil
 }
 
 func (log *InMemoryLog[T]) History(lastLogIndex uint64) ([]LogEntry[T], error) {

@@ -33,6 +33,7 @@ type Raft[T interface{}] struct {
 	id        uint32
 	heartbeat chan struct{}
 	replicate chan struct{}
+	Apply     chan T
 
 	mtx      *sync.Mutex
 	role     Role
@@ -58,6 +59,7 @@ func NewWithConfig[T interface{}](conf Config) *Raft[T] {
 		id:        id,
 		heartbeat: make(chan struct{}, conf.QueueSize),
 		replicate: make(chan struct{}, conf.QueueSize),
+		Apply:     make(chan T, conf.QueueSize),
 
 		mtx:      &sync.Mutex{},
 		role:     Follower,
@@ -366,8 +368,14 @@ func (raft *Raft[T]) AppendEntries(req AppendEntriesRequest[T], reply *Reply) er
 		}
 		raft.Log.Append(req.PrevLogIndex, req.Entries)
 		if req.LeaderCommit > raft.Log.CommitedIndex() {
-			// TODO: Update State
-			raft.Log.Commit(req.LeaderCommit)
+			logs, err := raft.Log.Commit(req.LeaderCommit)
+			if err != nil {
+				zap.L().Error("commit failed", zap.Error(err))
+			} else {
+				for _, entry := range logs {
+					raft.Apply <- entry.Command
+				}
+			}
 		}
 		raft.mtx.Unlock()
 		raft.heartbeat <- struct{}{}
