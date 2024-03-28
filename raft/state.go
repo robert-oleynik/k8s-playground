@@ -14,12 +14,14 @@ type LogManager[T interface{}] interface {
 	Append(i uint64, entries []LogEntry[T]) error
 	// Set last logged entry to provided logged index.
 	Commit(logIndex uint64) error
+	// Returns a list of indices after
+	History(lastLogIndex uint64) ([]LogEntry[T], error)
 	// Commited index
 	CommitedIndex() uint64
 	// Returns true if log entry with id and term exists.
 	Validate(index uint64, term uint32) bool
-	// Returns the term of the last commited entry.
-	LastTerm() (uint32, error)
+	// Returns the term of the log entry with given index.
+	Term(index uint64) (uint32, error)
 	// Returns the index of the last commited entry.
 	LastLogIndex() (uint64, error)
 }
@@ -55,11 +57,19 @@ func (log *InMemoryLog[T]) Append(i uint64, entries []LogEntry[T]) error {
 func (log *InMemoryLog[T]) Commit(logIndex uint64) error {
 	log.mtx.Lock()
 	defer log.mtx.Unlock()
-	if int(logIndex) >= len(log.Entries) {
+	if int(logIndex) > len(log.Entries) {
 		return errors.New("cannot commit non-existing entry")
 	}
 	log.Commited = uint(logIndex)
 	return nil
+}
+
+func (log *InMemoryLog[T]) History(lastLogIndex uint64) ([]LogEntry[T], error) {
+	results := []LogEntry[T]{}
+	log.mtx.RLock()
+	results = append(results, log.Entries[lastLogIndex:]...)
+	log.mtx.RUnlock()
+	return results, nil
 }
 
 func (log *InMemoryLog[T]) Validate(index uint64, term uint32) bool {

@@ -2,6 +2,7 @@ package raft
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand"
 	"net"
@@ -31,6 +32,7 @@ type Raft[T interface{}] struct {
 
 	id        uint32
 	heartbeat chan struct{}
+	replicate chan struct{}
 
 	mtx      *sync.Mutex
 	role     Role
@@ -54,7 +56,8 @@ func NewWithConfig[T interface{}](conf Config) *Raft[T] {
 		Config:          conf,
 
 		id:        id,
-		heartbeat: make(chan struct{}),
+		heartbeat: make(chan struct{}, conf.QueueSize),
+		replicate: make(chan struct{}, conf.QueueSize),
 
 		mtx:      &sync.Mutex{},
 		role:     Follower,
@@ -63,26 +66,32 @@ func NewWithConfig[T interface{}](conf Config) *Raft[T] {
 	}
 }
 
-/**
 func (raft *Raft[T]) Update(cmds []T) error {
 	raft.mtx.Lock()
 	role := raft.role
 	raft.mtx.Unlock()
 
 	req := UpdateRequest[T]{Data: cmds}
-	var reply UpdateReply
+	var reply Reply
 	if role == Leader {
 		if err := raft.RequestUpdate(req, &reply); err != nil {
 			return fmt.Errorf("request update: %w", err)
 		}
 	} else if role == Follower {
-		// TODO: Request leader
+		leader := raft.Peers.Leader()
+		if leader != nil {
+			var reply Reply
+			if err := leader.Call("Raft.RequestUpdate", req, &reply); err != nil {
+				return fmt.Errorf("proxy update: %w", err)
+			} else if !reply.Success {
+				return errors.New("update rejected")
+			}
+		}
 	} else if role == Canidate {
 		return fmt.Errorf("no leader elected: update rejected")
 	}
 	return nil
 }
-*/
 
 func (raft *Raft[T]) ServeHTTP(listener net.Listener) error {
 	server := rpc.NewServer()
@@ -100,15 +109,15 @@ func (raft *Raft[T]) ServeHTTP(listener net.Listener) error {
 
 func (raft *Raft[T]) RequestVotesWithContext(ctx context.Context) (bool, error) {
 	raft.mtx.Lock()
-	term, err := raft.Log.LastTerm()
-	if err != nil {
-		raft.mtx.Unlock()
-		return false, fmt.Errorf("fetch term: %w", err)
-	}
 	index, err := raft.Log.LastLogIndex()
 	if err != nil {
 		raft.mtx.Unlock()
 		return false, fmt.Errorf("fetch log index: %w", err)
+	}
+	term, err := raft.Log.Term(index)
+	if err != nil {
+		raft.mtx.Unlock()
+		return false, fmt.Errorf("fetch term: %w", err)
 	}
 	req := VoteRequest{
 		Term:         raft.term,
@@ -145,7 +154,7 @@ func (raft *Raft[T]) RequestVotesWithContext(ctx context.Context) (bool, error) 
 	return votes*2 >= peerCount, nil
 }
 
-func (raft *Raft[T]) SendHeartbeet() error {
+func (raft *Raft[T]) SendHeartbeat() error {
 	peers := raft.Peers.GetPeers()
 	raft.mtx.Lock()
 	term := raft.term
@@ -153,35 +162,100 @@ func (raft *Raft[T]) SendHeartbeet() error {
 	if err != nil {
 		return fmt.Errorf("log index: %w", err)
 	}
-	logTerm, err := raft.Log.LastTerm()
-	if err != nil {
-		return fmt.Errorf("log term: %w", err)
-	}
 	commit := raft.Log.CommitedIndex()
 	raft.mtx.Unlock()
 	for _, peer := range peers {
+		peerLogIndex := peer.LastLogIndex()
 		go func() {
-			var reply Reply
-			args := AppendEntriesRequest[T]{
-				Term:         term,
-				LeaderId:     raft.id,
-				LeaderCommit: commit,
-				PrevLogTerm:  logTerm,
-				PrevLogIndex: logIndex,
-				Entries:      []LogEntry[T]{},
+			index := min(peerLogIndex, logIndex)
+			for {
+				var reply Reply
+				raft.mtx.Lock()
+				logTerm, err := raft.Log.Term(index)
+				if err != nil {
+					zap.L().Error("heartbeat: failed to fetch term", zap.Error(err))
+					break
+				}
+				raft.mtx.Unlock()
+				args := AppendEntriesRequest[T]{
+					Term:         term,
+					LeaderId:     raft.id,
+					LeaderCommit: commit,
+					PrevLogTerm:  logTerm,
+					PrevLogIndex: index,
+					Entries:      []LogEntry[T]{},
+				}
+				if err := peer.Call("Raft.AppendEntries", args, &reply); err != nil {
+					zap.L().Error("raft: failed to send heartbeat", zap.Error(err))
+				}
+				peer.SetLastLogIndex(index)
+				if reply.Success {
+					break
+				}
+				index--
 			}
-			if err := peer.Call("Raft.AppendEntries", args, &reply); err != nil {
-				zap.L().Error("raft: failed to send heartbeat", zap.Error(err))
-			}
-			// TODO: Update Peer Information
 		}()
 	}
-	// TODO: Update last index of each
+	return nil
+}
+
+func (raft *Raft[T]) ReplicateLog() error {
+	peers := raft.Peers.GetPeers()
+	raft.mtx.Lock()
+	term := raft.term
+	commit := raft.Log.CommitedIndex()
+	raft.mtx.Unlock()
+	for _, peer := range peers {
+		peerLogIndex := peer.LastLogIndex()
+		go func() {
+			for {
+				raft.mtx.Lock()
+				logTerm, err := raft.Log.Term(peerLogIndex)
+				if err != nil {
+					zap.L().Error("heartbeat: failed to fetch term", zap.Error(err))
+					break
+				}
+				entries, err := raft.Log.History(peerLogIndex)
+				if err != nil {
+					zap.L().Error("entries", zap.Error(err))
+					break
+				}
+				raft.mtx.Unlock()
+				if len(entries) == 0 {
+					break
+				}
+				var reply Reply
+				args := AppendEntriesRequest[T]{
+					Term:         term,
+					LeaderId:     raft.id,
+					LeaderCommit: commit,
+					PrevLogTerm:  logTerm,
+					PrevLogIndex: peerLogIndex,
+					Entries:      entries,
+				}
+				if err := peer.Call("Raft.AppendEntries", args, &reply); err != nil {
+					zap.L().Error("raft: failed to send heartbeat", zap.Error(err))
+				}
+				if reply.Success {
+					raft.mtx.Lock()
+					index := entries[len(entries)-1].LogIndex
+					peer.SetLastLogIndex(index)
+					zap.L().Info("peer successfully replicated",
+						zap.Uint32("id", peer.Id),
+						zap.String("addr", peer.Addr.String()),
+						zap.Uint64("lastIndex", index))
+					raft.mtx.Unlock()
+					break
+				}
+			}
+		}()
+	}
 	return nil
 }
 
 func (raft *Raft[T]) ElectNewLeader() error {
 	raft.mtx.Lock()
+	raft.Peers.SetLeader(0)
 	raft.role = Canidate
 	for raft.role == Canidate {
 		raft.term += 1
@@ -210,6 +284,13 @@ func (raft *Raft[T]) ElectNewLeader() error {
 }
 
 func (raft *Raft[T]) RunSession() error {
+	go func() {
+		for range raft.replicate {
+			if err := raft.ReplicateLog(); err != nil {
+				zap.L().Error("log replication failed", zap.Error(err))
+			}
+		}
+	}()
 	for {
 		raft.mtx.Lock()
 		r := raft.role
@@ -231,7 +312,7 @@ func (raft *Raft[T]) RunSession() error {
 		} else if r == Leader {
 			zap.L().Debug("raft: sending heartbeat",
 				zap.Duration("heartbeatPeriod", raft.Config.HeartbeatPeriod))
-			raft.SendHeartbeet()
+			raft.ReplicateLog()
 			time.Sleep(raft.Config.HeartbeatPeriod)
 		} else {
 			panic("should not be reached")
@@ -273,16 +354,13 @@ type Reply struct {
 	Success bool
 }
 
-type UpdateReply struct {
-	Completed int
-	Success   bool
-}
-
 func (raft *Raft[T]) AppendEntries(req AppendEntriesRequest[T], reply *Reply) error {
 	raft.mtx.Lock()
 	if req.Term < raft.term {
 		reply.Success = false
+		raft.mtx.Unlock()
 	} else {
+		raft.Peers.SetLeader(req.LeaderId)
 		if raft.role == Canidate || raft.role == Leader {
 			raft.role = Follower
 		}
@@ -291,10 +369,10 @@ func (raft *Raft[T]) AppendEntries(req AppendEntriesRequest[T], reply *Reply) er
 			// TODO: Update State
 			raft.Log.Commit(req.LeaderCommit)
 		}
+		raft.mtx.Unlock()
+		raft.heartbeat <- struct{}{}
 
 	}
-	raft.mtx.Unlock()
-	raft.heartbeat <- struct{}{}
 	zap.L().Info("raft: append entries",
 		zap.Uint32("term", req.Term),
 		zap.Uint32("leaderId", req.LeaderId),
@@ -329,9 +407,14 @@ func (raft *Raft[T]) RequestVote(req VoteRequest, reply *Reply) error {
 	return nil
 }
 
-/**
-func (raft *Raft[T]) RequestUpdate(req UpdateRequest[T], reply *UpdateReply) error {
+func (raft *Raft[T]) RequestUpdate(req UpdateRequest[T], reply *Reply) error {
 	raft.mtx.Lock()
+	reply.Term = uint64(raft.term)
+	if raft.role != Leader {
+		reply.Success = false
+		raft.mtx.Unlock()
+		return nil
+	}
 	entries := make([]LogEntry[T], len(req.Data))
 	lastIndex, err := raft.Log.LastLogIndex()
 	if err != nil {
@@ -341,7 +424,7 @@ func (raft *Raft[T]) RequestUpdate(req UpdateRequest[T], reply *UpdateReply) err
 	for i, cmd := range req.Data {
 		entries = append(entries, LogEntry[T]{
 			Term:     raft.term,
-			LogIndex: lastIndex + i + 1,
+			LogIndex: lastIndex + uint64(i) + 1,
 			Command:  cmd,
 		})
 	}
@@ -349,7 +432,8 @@ func (raft *Raft[T]) RequestUpdate(req UpdateRequest[T], reply *UpdateReply) err
 		return fmt.Errorf("log append: %w", err)
 	}
 	raft.mtx.Unlock()
-	// TODO: Replicate to majority before confirming
+
+	raft.replicate <- struct{}{}
+	reply.Success = true
 	return nil
 }
-*/

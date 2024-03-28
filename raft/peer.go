@@ -16,19 +16,33 @@ type PeerAddr struct {
 }
 
 type Peer struct {
-	mtx    *sync.Mutex
-	client *rpc.Client
-	Id     uint32
-	Addr   PeerAddr
+	mtx          *sync.Mutex
+	client       *rpc.Client
+	Id           uint32
+	Addr         PeerAddr
+	lastLogIndex uint64
 }
 
-func NewPeer(id uint32, host string, port uint16) Peer {
+func NewPeer(id uint32, host string, port uint16, lastLogIndex uint64) Peer {
 	return Peer{
-		mtx:    &sync.Mutex{},
-		client: nil,
-		Id:     id,
-		Addr:   PeerAddr{Host: host, Port: port},
+		mtx:          &sync.Mutex{},
+		client:       nil,
+		Id:           id,
+		Addr:         PeerAddr{Host: host, Port: port},
+		lastLogIndex: lastLogIndex,
 	}
+}
+
+func (peer *Peer) SetLastLogIndex(index uint64) {
+	peer.mtx.Lock()
+	peer.lastLogIndex = index
+	peer.mtx.Unlock()
+}
+
+func (peer *Peer) LastLogIndex() uint64 {
+	peer.mtx.Lock()
+	defer peer.mtx.Unlock()
+	return peer.lastLogIndex
 }
 
 type Peers struct {
@@ -38,18 +52,13 @@ type Peers struct {
 	peers     []Peer
 }
 
-func NewPeers(host string, port uint16) Peers {
+func NewPeers(self Peer) Peers {
 	id := rand.Uint32()
 	if id == 0 {
 		id = 1
 	}
 	return Peers{
-		Self: Peer{
-			mtx:    &sync.Mutex{},
-			client: nil,
-			Id:     id,
-			Addr:   PeerAddr{Host: host, Port: port},
-		},
+		Self:      self,
 		mtx:       &sync.RWMutex{},
 		LeaderIdx: -1,
 		peers:     []Peer{},
@@ -79,7 +88,7 @@ func (peers *Peers) Join(peer Peer) error {
 		if p.Id == peer.Id {
 			continue
 		}
-		peer := NewPeer(p.Id, p.Addr.Host, p.Addr.Port)
+		peer := NewPeer(p.Id, p.Addr.Host, p.Addr.Port, p.LastLogIndex)
 		var reply JoinReply
 		if err := peer.Call("Peers.RequestJoin", peers.Self, &reply); err != nil {
 			error = fmt.Errorf("failed to call peer: %w", err)
@@ -113,6 +122,32 @@ func (peers *Peers) Join(peer Peer) error {
 	return error
 }
 
+func (peers *Peers) SetLeader(id uint32) {
+	peers.mtx.Lock()
+	defer peers.mtx.Unlock()
+	if id == 0 {
+		peers.LeaderIdx = -1
+		return
+	}
+	for i, peer := range peers.peers {
+		if peer.Id == id {
+			peers.LeaderIdx = i
+			return
+		}
+	}
+	zap.L().Error("unkown peer", zap.Uint32("id", id))
+	peers.LeaderIdx = -1
+}
+
+func (peers *Peers) Leader() *Peer {
+	peers.mtx.RLock()
+	defer peers.mtx.RUnlock()
+	if peers.LeaderIdx != -1 {
+		return &peers.peers[peers.LeaderIdx]
+	}
+	return nil
+}
+
 func (peers *Peers) PeerCount() int {
 	peers.mtx.RLock()
 	defer peers.mtx.RUnlock()
@@ -141,8 +176,9 @@ func (peers *Peers) Broadcast(method string, req any) chan *rpc.Call {
 }
 
 type PeerInfo struct {
-	Id   uint32
-	Addr PeerAddr
+	Id           uint32
+	Addr         PeerAddr
+	LastLogIndex uint64
 }
 
 type JoinReply struct {

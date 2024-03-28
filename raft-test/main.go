@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"math/rand"
 	"net"
 	"os"
 	"strconv"
@@ -34,13 +35,17 @@ func main() {
 
 	host := "127.0.0.1"
 	ports := []uint16{5000, 5001, 5002}
-	peers := raft.NewPeers(host, ports[idx])
+	self := raft.NewPeer(rand.Uint32(), host, ports[idx], 0)
+	if self.Id == 0 {
+		self.Id = 1
+	}
+	peers := raft.NewPeers(self)
 	for i, port := range ports {
 		if i == idx {
 			continue
 		}
 		zap.L().Info("join peer", zap.Int("idx", i))
-		peer := raft.NewPeer(0, host, port)
+		peer := raft.NewPeer(0, host, port, 0)
 		if err := peers.Join(peer); err != nil {
 			zap.L().Error("failed to join raft cluster", zap.Error(err))
 			continue
