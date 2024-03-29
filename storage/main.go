@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 
 	"github.com/go-errors/errors"
 	"github.com/google/uuid"
@@ -25,35 +26,43 @@ var (
 )
 
 func main() {
-	sysLogger, err := zap.NewProduction()
+	logger, err := zap.NewProduction()
 	if err != nil {
 		log.Fatalf("failed to init logger: %v", err)
 	}
-	defer throwError(sysLogger.Sync())
-	logger = sysLogger
-	l := *sysLogger.Sugar()
+	defer throwError(logger.Sync())
+	zap.ReplaceGlobals(logger)
 
 	addr := os.Getenv("STORAGE_ADDR")
 	if addr == "" {
 		addr = "[::]:3000"
 	}
-	l.Debugw("config", "addr", addr)
+	zap.S().Debugw("config", "addr", addr)
+	raftAddrS := os.Getenv("STORAGE_RAFT_PORT")
+	if raftAddrS == "" {
+		raftAddrS = "5000"
+	}
+	raftPort, err := strconv.Atoi(raftAddrS)
+	if err != nil {
+		zap.S().Fatal(err)
+	}
+	go throwError(LaunchRaft(uint16(raftPort)))
 
 	counter := prometheus.NewCounter(prometheus.CounterOpts{Namespace: "storage", Name: "inserted_entries"})
 	if err := prometheus.Register(counter); err != nil {
-		l.Fatal(err)
+		zap.S().Fatal(err)
 	}
 	insertCounter = &counter
 
 	counter = prometheus.NewCounter(prometheus.CounterOpts{Namespace: "storage", Name: "updated_entries"})
 	if err := prometheus.Register(counter); err != nil {
-		l.Fatal(err)
+		zap.S().Fatal(err)
 	}
 	updateCounter = &counter
 
 	counter = prometheus.NewCounter(prometheus.CounterOpts{Namespace: "storage", Name: "deleted_entries"})
 	if err := prometheus.Register(counter); err != nil {
-		l.Fatal(err)
+		zap.S().Fatal(err)
 	}
 	deleteCounter = &counter
 
@@ -138,7 +147,7 @@ func main() {
 		return nil
 	})
 
-	l.Fatal(e.Start(addr))
+	zap.S().Fatal(e.Start(addr))
 }
 
 func throwError(err error) {
