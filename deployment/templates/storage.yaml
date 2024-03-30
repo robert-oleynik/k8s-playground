@@ -1,0 +1,69 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.storage.name | quote }}
+imagePullSecrets:
+{{ range .Values.imagePullSecrets }}
+- name: {{ . | quote }}
+{{ end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Values.storage.name | quote }}
+roleRef:
+  apiGroup: ""
+  kind: ClusterRole
+  name: pod-observer
+subjects:
+- namespace: {{ .Release.Namespace | quote }}
+  name: {{ .Values.storage.name | quote }}
+  kind: ServiceAccount
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.storage.name | quote }}
+spec:
+  selector:
+    matchLabels:
+      "raft/cluster": {{ .Values.storage.clusterName | quote }}
+  replicas: 3
+  template:
+    metadata:
+      labels:
+        "raft/cluster": {{ .Values.storage.clusterName | quote }}
+    spec:
+      serviceAccountName: {{ .Values.storage.name | quote }}
+      containers:
+      - name: raft-node
+        image: {{ .Values.storage.image | quote }}
+        imagePullPolicy: Always
+        env:
+        - name: "K8S_NAMESPACE"
+          value: {{ .Release.Namespace | quote }}
+        - name: "K8S_NAME"
+          value: {{ .Values.storage.name | quote }}
+        - name: "K8S_POD"
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        ports:
+        - containerPort: 80
+          name: http
+        - containerPort: 5000
+          name: raft
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.storage.name | quote }}
+spec:
+  type: "ClusterIP"
+  ports:
+  - name: "http"
+    port: 80
+    targetPort: 80
+    appProtocol: "tcp"
+  selector:
+    "raft/cluster": {{ .Values.storage.clusterName | quote }}

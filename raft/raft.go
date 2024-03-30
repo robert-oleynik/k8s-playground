@@ -272,7 +272,7 @@ func (raft *Raft[T]) ReplicateLog() error {
 					raft.mtx.Lock()
 					index := entries[len(entries)-1].LogIndex
 					peer.SetLastLogIndex(index)
-					zap.L().Info("peer successfully replicated",
+					zap.L().Debug("peer successfully replicated",
 						zap.Uint32("id", peer.Id),
 						zap.Uint64("lastIndex", index))
 					raft.mtx.Unlock()
@@ -286,10 +286,11 @@ func (raft *Raft[T]) ReplicateLog() error {
 }
 
 func (raft *Raft[T]) ElectNewLeader() error {
-	raft.mtx.Lock()
 	raft.peerMtx.Lock()
 	raft.leaderId = 0
 	raft.peerMtx.Unlock()
+
+	raft.mtx.Lock()
 	raft.role = Canidate
 	for raft.role == Canidate {
 		raft.term += 1

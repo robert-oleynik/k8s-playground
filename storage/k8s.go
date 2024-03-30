@@ -16,8 +16,12 @@ import (
 )
 
 type ServiceConfig struct {
+	// Namespace to observe for raft cluster pods.
 	Namespace string
-	Name      string
+	// Name of pod this service is deployed in.
+	PodName string
+	// Name of service to replicate (label `raft/cluster`)
+	Name string
 }
 
 type Service struct {
@@ -35,7 +39,10 @@ type ServiceDiscoverer struct {
 }
 
 func NewK8sDiscovererWithContext(conf ServiceConfig) (ServiceDiscoverer, error) {
-	var discoverer ServiceDiscoverer
+	discoverer := ServiceDiscoverer{
+		mtx:   &sync.RWMutex{},
+		peers: []raft.Peer{},
+	}
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return discoverer, fmt.Errorf("k8s config: %w", err)
@@ -45,7 +52,7 @@ func NewK8sDiscovererWithContext(conf ServiceConfig) (ServiceDiscoverer, error) 
 		return discoverer, fmt.Errorf("k8s client: %w", err)
 	}
 
-	req, err := labels.NewRequirement("storage/raft", selection.Equals, []string{conf.Name})
+	req, err := labels.NewRequirement("raft/cluster", selection.Equals, []string{conf.Name})
 	if err != nil {
 		return discoverer, fmt.Errorf("k8s requirement: %w", err)
 	}
@@ -69,12 +76,18 @@ func (discoverer *ServiceDiscoverer) ListServicesWithContext(ctx context.Context
 		return services, fmt.Errorf("k8s api: %w", err)
 	}
 	for _, pod := range list.Items {
+		if pod.Name == discoverer.conf.Name {
+			continue
+		} else if pod.Status.PodIP == "" {
+			continue
+		}
 		port, ok := pod.Annotations["storage/raft.port"]
 		if !ok {
-			port = "raft"
+			// TODO: Declare global default port
+			port = "5000"
 		}
 		services = append(services, Service{
-			Host: pod.Spec.Hostname,
+			Host: pod.Status.PodIP,
 			Port: port,
 		})
 	}

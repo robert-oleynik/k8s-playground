@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log"
@@ -26,6 +27,12 @@ var (
 )
 
 func main() {
+	serviceConfig := ServiceConfig{
+		Namespace: os.Getenv("K8S_NAMESPACE"),
+		Name:      os.Getenv("K8S_NAME"),
+		PodName:   os.Getenv("K8S_POD"),
+	}
+
 	logger, err := zap.NewProduction()
 	if err != nil {
 		log.Fatalf("failed to init logger: %v", err)
@@ -35,7 +42,7 @@ func main() {
 
 	addr := os.Getenv("STORAGE_ADDR")
 	if addr == "" {
-		addr = "[::]:3000"
+		addr = "[::]:80"
 	}
 	zap.S().Debugw("config", "addr", addr)
 	raftAddrS := os.Getenv("STORAGE_RAFT_PORT")
@@ -46,7 +53,7 @@ func main() {
 	if err != nil {
 		zap.S().Fatal(err)
 	}
-	go throwError(LaunchRaft(uint16(raftPort)))
+	go throwError(LaunchRaftWithContext(uint16(raftPort), serviceConfig, context.Background()))
 
 	counter := prometheus.NewCounter(prometheus.CounterOpts{Namespace: "storage", Name: "inserted_entries"})
 	if err := prometheus.Register(counter); err != nil {

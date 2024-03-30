@@ -5,7 +5,6 @@ ARG TARGET
 
 RUN mkdir /project
 COPY ./storage /project/storage
-COPY ./raft-test /project/raft-test
 COPY ./raft /project/raft
 COPY ./go.work ./go.work.sum /project
 WORKDIR /project
@@ -16,6 +15,6 @@ RUN go build -o /project/out/${TARGET} /project/${TARGET}
 FROM golang:${GO_VERSION}
 ARG TARGET
 
-COPY --from=builder /project/out/${TARGET} /usr/bin/${TARGET}
+COPY --from=builder /project/out/${TARGET} /usr/bin/service
 
-ENTRYPOINT [ "/usr/bin/${TARGET}" ]
+ENTRYPOINT [ "/usr/bin/service" ]

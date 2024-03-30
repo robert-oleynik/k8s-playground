@@ -1,0 +1,6 @@
+storage:
+  name: "storage"
+  image: "ghcr.io/robert-oleynik/k8s-playground:storage"
+  clusterName: "storage"
+imagePullSecrets:
+- regcred
