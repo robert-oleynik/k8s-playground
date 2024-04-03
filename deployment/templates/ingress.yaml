@@ -6,8 +6,8 @@ spec:
   rules:
   - http:
       paths:
-      - pathType: "Prefix"
-        path: "/storage"
+      - pathType: Prefix
+        path: /
         backend:
           service:
             name: {{ .Values.storage.name | quote }}

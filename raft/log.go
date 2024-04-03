@@ -2,6 +2,7 @@ package raft
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -85,7 +86,7 @@ func (log *MemoryLog[T]) Term(index uint64) (uint32, error) {
 	} else if index <= uint64(len(log.Entries)) {
 		return log.Entries[index].Term, nil
 	}
-	return 0, errors.New("no such entry")
+	return 0, errors.New(fmt.Sprintf("No entry with index %d", index))
 }
 
 func (log *MemoryLog[T]) LastLogIndex() (uint64, error) {

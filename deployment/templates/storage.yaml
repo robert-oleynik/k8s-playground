@@ -48,11 +48,32 @@ spec:
           valueFrom:
             fieldRef:
               fieldPath: metadata.name
+        - name: RAFT_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
         ports:
         - containerPort: 80
           name: http
         - containerPort: 5000
           name: raft
+        resources:
+          requests:
+            memory: "64Mi"
+          limits:
+            memory: "1Gi"
+        readinessProbe:
+          initialDelaySeconds: 1
+          periodSeconds: 3
+          httpGet:
+            path: "/health"
+            port: 80
+        livenessProbe:
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          httpGet:
+            path: "/health"
+            port: 80
 ---
 apiVersion: v1
 kind: Service

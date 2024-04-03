@@ -22,9 +22,12 @@ type ServiceConfig struct {
 	PodName string
 	// Name of service to replicate (label `raft/cluster`)
 	Name string
+	// Index of the given service. Optional: equals to 2<<32-1 if unset.
+	Id uint32
 }
 
 type Service struct {
+	Name string
 	Host string
 	Port string
 }
@@ -76,7 +79,7 @@ func (discoverer *ServiceDiscoverer) ListServicesWithContext(ctx context.Context
 		return services, fmt.Errorf("k8s api: %w", err)
 	}
 	for _, pod := range list.Items {
-		if pod.Name == discoverer.conf.Name {
+		if pod.Name == discoverer.conf.PodName {
 			continue
 		} else if pod.Status.PodIP == "" {
 			continue
@@ -87,10 +90,14 @@ func (discoverer *ServiceDiscoverer) ListServicesWithContext(ctx context.Context
 			port = "5000"
 		}
 		services = append(services, Service{
+			Name: pod.Spec.Hostname,
 			Host: pod.Status.PodIP,
 			Port: port,
 		})
 	}
+	zap.L().Info("list services",
+		zap.String("name", discoverer.conf.Name),
+		zap.Any("services", services))
 	return services, nil
 }
 

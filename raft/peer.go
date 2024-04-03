@@ -18,18 +18,24 @@ type PeerAddr struct {
 }
 
 type Peer struct {
-	Client       *rpc.Client
-	Id           uint32
-	mtx          *sync.RWMutex
-	lastLogIndex uint64
+	Id   uint32
+	host string
+	port string
+
+	Client   *rpc.Client
+	mtx      *sync.RWMutex
+	logIndex uint64
 }
 
 func NewPeer(host string, port string) (Peer, error) {
 	peer := Peer{
-		Client:       nil,
-		mtx:          &sync.RWMutex{},
-		Id:           0,
-		lastLogIndex: 0,
+		Id:   0,
+		host: host,
+		port: port,
+
+		Client:   nil,
+		mtx:      &sync.RWMutex{},
+		logIndex: 0,
 	}
 	client, err := rpc.DialHTTP("tcp", fmt.Sprintf("%s:%s", host, port))
 	if err != nil {
@@ -46,19 +52,19 @@ func (peer *Peer) FetchInfo() error {
 	}
 	peer.mtx.Lock()
 	peer.Id = reply.Id
-	peer.lastLogIndex = reply.LogIndex
+	peer.logIndex = reply.LogIndex
 	peer.mtx.Unlock()
 	return nil
 }
 
 func (peer *Peer) SetLastLogIndex(index uint64) {
 	peer.mtx.Lock()
-	peer.lastLogIndex = index
+	peer.logIndex = index
 	peer.mtx.Unlock()
 }
 
 func (peer *Peer) LastLogIndex() uint64 {
 	peer.mtx.RLock()
 	defer peer.mtx.RUnlock()
-	return peer.lastLogIndex
+	return peer.logIndex
 }
