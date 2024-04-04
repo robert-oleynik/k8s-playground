@@ -12,7 +12,7 @@ RUN go mod download
 RUN mkdir out
 RUN go build -o /project/out/${TARGET} /project/${TARGET}
 
-FROM golang:${GO_VERSION}
+FROM debian:latest
 ARG TARGET
 
 COPY --from=builder /project/out/${TARGET} /usr/bin/service
