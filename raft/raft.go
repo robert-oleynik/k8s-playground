@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/rpc"
+	"slices"
 	"sync"
 	"time"
 
@@ -92,7 +93,7 @@ func (raft *Raft[T]) Update(cmds []T) error {
 		}
 	} else if role == Follower {
 		raft.peerMtx.RLock()
-		leader, ok := raft.peers[raft.Id]
+		leader, ok := raft.peers[raft.leaderId]
 		raft.peerMtx.RUnlock()
 		if !ok {
 			return errors.New("no peer elected")
@@ -186,8 +187,32 @@ func (raft *Raft[T]) SendHeartbeat() error {
 		return fmt.Errorf("log index: %w", err)
 	}
 	commit := raft.Log.CommitedIndex()
-	raft.mtx.Unlock()
+
 	raft.peerMtx.RLock()
+	defer raft.peerMtx.RUnlock()
+
+	indices := []uint64{commit}
+	for _, peer := range raft.peers {
+		peer.mtx.RLock()
+		defer peer.mtx.RUnlock()
+		indices = append(indices, peer.logIndex)
+	}
+	slices.Sort(indices)
+
+	newCommit := indices[(len(indices)-1)/2]
+	if newCommit > commit {
+		entries, err := raft.Log.Commit(newCommit)
+		if err != nil {
+			raft.mtx.Unlock()
+			return fmt.Errorf("commit: %w", err)
+		}
+		for _, entry := range entries {
+			raft.Apply <- entry.Command
+		}
+	}
+	commit = newCommit
+	raft.mtx.Unlock()
+
 	for _, peer := range raft.peers {
 		peerLogIndex := peer.LastLogIndex()
 		go func() {
@@ -233,7 +258,6 @@ func (raft *Raft[T]) SendHeartbeat() error {
 			}
 		}()
 	}
-	raft.peerMtx.RUnlock()
 	return nil
 }
 
@@ -466,7 +490,7 @@ func (raft *Raft[T]) AppendEntries(req AppendEntriesRequest[T], reply *Reply) er
 		reply.Success = true
 
 	}
-	zap.L().Debug("raft: append entries",
+	zap.L().Info("raft: append entries",
 		zap.Uint32("term", req.Term),
 		zap.Uint32("leaderId", req.LeaderId),
 		zap.Uint64("leaderCommit", req.LeaderCommit),

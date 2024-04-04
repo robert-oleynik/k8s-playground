@@ -45,7 +45,9 @@ func NewMemoryLog[T interface{}]() *MemoryLog[T] {
 
 func (log *MemoryLog[T]) Append(i uint64, entries []LogEntry[T]) error {
 	log.mtx.Lock()
-	copy(log.Entries[i:], entries[:len(entries[i:])])
+	if i < uint64(len(log.Entries)) {
+		copy(log.Entries[i:], entries[:len(entries[i:])])
+	}
 	log.Entries = append(log.Entries, entries[len(entries[i:]):]...)
 	log.mtx.Unlock()
 	return nil

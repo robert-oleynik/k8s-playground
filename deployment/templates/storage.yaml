@@ -38,7 +38,7 @@ spec:
       containers:
       - name: raft-node
         image: {{ .Values.storage.image | quote }}
-        imagePullPolicy: Always
+        imagePullPolicy: Never
         env:
         - name: "K8S_NAMESPACE"
           value: {{ .Release.Namespace | quote }}

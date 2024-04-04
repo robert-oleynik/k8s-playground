@@ -123,14 +123,12 @@ func main() {
 		return c.String(http.StatusOK, "200 OK")
 	})
 	e.POST("/", func(c echo.Context) error {
-		l := logger.Sugar()
-
 		content, err := io.ReadAll(c.Request().Body)
 		if err != nil {
-			return err
+			return fmt.Errorf("read body: %w", err)
+		} else if err := c.Request().Body.Close(); err != nil {
+			return fmt.Errorf("close body: %w", err)
 		}
-		defer throwError(c.Request().Body.Close())
-		l.Infow("", "contentLength", len(content))
 
 		if raftServer == nil {
 			return c.String(http.StatusServiceUnavailable, "503 Service Unavailable")

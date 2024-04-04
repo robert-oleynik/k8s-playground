@@ -26,7 +26,7 @@ type RaftCommand struct {
 }
 
 func LaunchRaftWithContext(port uint16, serviceConf ServiceConfig, ctx context.Context) error {
-	conf := raft.DefaultConfig()
+	conf := raft.DebugConfig()
 
 	k8sDiscoverer, err := NewK8sDiscovererWithContext(serviceConf)
 	if err != nil {
