@@ -33,12 +33,17 @@ func main() {
 		PodName:   os.Getenv("K8S_POD"),
 		Id:        0,
 	}
-	logger, err := zap.NewProduction()
+	logger, err := zap.NewDevelopment()
 	if err != nil {
 		log.Fatalf("failed to init logger: %v", err)
 	}
 	defer throwError(logger.Sync())
 	zap.ReplaceGlobals(logger)
+
+	zap.L().Info("config",
+		zap.String("namespace", serviceConfig.Namespace),
+		zap.String("name", serviceConfig.Name),
+		zap.String("pod", serviceConfig.PodName))
 
 	idS := os.Getenv("RAFT_ID")
 	if idS != "" {

@@ -28,17 +28,11 @@ type RaftCommand struct {
 func LaunchRaftWithContext(port uint16, serviceConf ServiceConfig, ctx context.Context) error {
 	conf := raft.DebugConfig()
 
-	k8sDiscoverer, err := NewK8sDiscovererWithContext(serviceConf)
-	if err != nil {
-		return fmt.Errorf("k8s: %w", err)
-	}
-
 	r := raft.NewWithConfig[RaftCommand](conf)
 	if serviceConf.Id != 0 {
 		r.Id = serviceConf.Id
 		zap.S().Infow("raft", "id", r.Id)
 	}
-	r.Discoverer = &k8sDiscoverer
 	raftState = &State{
 		guard: &sync.RWMutex{},
 		data:  make(map[uuid.UUID][]byte),
@@ -53,8 +47,13 @@ func LaunchRaftWithContext(port uint16, serviceConf ServiceConfig, ctx context.C
 			}
 		}
 	}()
-
 	r.Log = raft.NewMemoryLog[RaftCommand]()
+	go func() {
+		if err := StartDiscoverer(r, serviceConf); err != nil {
+			zap.L().Error("discoverer failed", zap.Error(err))
+		}
+	}()
+
 	listener, err := net.Listen("tcp", fmt.Sprintf("[::]:%d", port))
 	if err != nil {
 		return fmt.Errorf("listener: %w", err)
@@ -68,7 +67,7 @@ func LaunchRaftWithContext(port uint16, serviceConf ServiceConfig, ctx context.C
 
 func (state *State) Apply(cmd RaftCommand) error {
 	state.guard.Lock()
-	defer state.guard.RUnlock()
+	defer state.guard.Unlock()
 	if cmd.Delete {
 		delete(state.data, cmd.Id)
 	} else {

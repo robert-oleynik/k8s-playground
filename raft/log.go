@@ -45,11 +45,18 @@ func NewMemoryLog[T interface{}]() *MemoryLog[T] {
 
 func (log *MemoryLog[T]) Append(i uint64, entries []LogEntry[T]) error {
 	log.mtx.Lock()
+	defer log.mtx.Unlock()
 	if i < uint64(len(log.Entries)) {
 		copy(log.Entries[i:], entries[:len(entries[i:])])
+		if len(log.Entries[i:]) < len(entries) {
+			log.Entries = append(log.Entries, entries[len(log.Entries[i:]):]...)
+		}
+	} else if i == uint64(len(log.Entries)) {
+		log.Entries = append(log.Entries, entries...)
+	} else {
+		return fmt.Errorf("log: failed to insert at %d in log with length %d",
+			i, len(log.Entries))
 	}
-	log.Entries = append(log.Entries, entries[len(entries[i:]):]...)
-	log.mtx.Unlock()
 	return nil
 }
 
@@ -86,7 +93,7 @@ func (log *MemoryLog[T]) Term(index uint64) (uint32, error) {
 	if index == 0 {
 		return 0, nil
 	} else if index <= uint64(len(log.Entries)) {
-		return log.Entries[index].Term, nil
+		return log.Entries[index-1].Term, nil
 	}
 	return 0, errors.New(fmt.Sprintf("No entry with index %d", index))
 }
