@@ -32,7 +32,7 @@ type LogEntry[T interface{}] struct {
 type MemoryLog[T interface{}] struct {
 	mtx      *sync.RWMutex
 	Entries  []LogEntry[T]
-	Commited uint
+	Commited uint64
 }
 
 func NewMemoryLog[T interface{}]() *MemoryLog[T] {
@@ -64,11 +64,9 @@ func (log *MemoryLog[T]) Commit(logIndex uint64) ([]LogEntry[T], error) {
 	var commited []LogEntry[T]
 	log.mtx.Lock()
 	defer log.mtx.Unlock()
-	if int(logIndex) > len(log.Entries) {
-		return commited, errors.New("cannot commit non-existing entry")
-	}
+	commitedIndex := min(uint64(len(log.Entries)), logIndex)
 	commited = log.Entries[log.Commited:int(logIndex)]
-	log.Commited = uint(logIndex)
+	log.Commited = commitedIndex
 	return commited, nil
 }
 
