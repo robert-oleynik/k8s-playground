@@ -15,7 +15,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-func k8sConnect(conf *config.Config) func() tea.Msg {
+func k8sConnect(conf *config.Config) tea.Cmd {
 	return func() tea.Msg {
 		conf, err := clientcmd.BuildConfigFromFlags("", conf.Kubernetes.ConfigPath)
 		if err != nil {
@@ -29,13 +29,37 @@ func k8sConnect(conf *config.Config) func() tea.Msg {
 	}
 }
 
+func k8sRestartCluster(client *kubernetes.Clientset, conf *config.Config) tea.Cmd {
+	return func() tea.Msg {
+		req, err := labels.NewRequirement(
+			"raft/cluster",
+			selection.Equals,
+			[]string{conf.Raft.ClusterName})
+		if err != nil {
+			return fmt.Errorf("k8s: requirement: %w", err)
+		}
+		selector := labels.NewSelector()
+		selector.Add(*req)
+		err = client.CoreV1().
+			Pods(conf.Kubernetes.Namespace).
+			DeleteCollection(context.Background(), v1.DeleteOptions{}, v1.ListOptions{
+				LabelSelector: selector.String(),
+			})
+		if err != nil {
+			return fmt.Errorf("k8s: delete pods: %w", err)
+		}
+		time.Sleep(3 * time.Second)
+		return client
+	}
+}
+
 type NodeProxy struct {
 	Name string
 	Port uint16
 	cmd  *exec.Cmd
 }
 
-func k8sConnectPeers(client *kubernetes.Clientset, conf *config.Config) func() tea.Msg {
+func k8sConnectPeers(client *kubernetes.Clientset, conf *config.Config) tea.Cmd {
 	return func() tea.Msg {
 		req, err := labels.NewRequirement(
 			"raft/cluster",

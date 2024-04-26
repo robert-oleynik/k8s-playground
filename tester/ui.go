@@ -29,7 +29,7 @@ func Init(conf *config.Config) *Ui {
 		PaddingRight(0).
 		MarginRight(0)
 	return &Ui{
-		Current:     -2,
+		Current:     -3,
 		TestCases:   []TestCase{},
 		TestReports: []*TestReport{},
 		Tester:      nil,
@@ -56,7 +56,11 @@ func (ui *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case *kubernetes.Clientset:
 		ui.Current++
-		return ui, k8sConnectPeers(msg, ui.Config)
+		if ui.Current == -2 {
+			return ui, k8sRestartCluster(msg, ui.Config)
+		} else {
+			return ui, k8sConnectPeers(msg, ui.Config)
+		}
 	case []NodeProxy:
 		ui.Tester = NewTester(msg...)
 		ui.Current++
@@ -94,7 +98,7 @@ func (ui *Ui) View() string {
 	scheduled := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("8"))
 	output := "\n"
-	if ui.Current == -2 {
+	if ui.Current == -3 {
 		if ui.err == nil {
 			output += ui.spinner.View()
 		} else {
@@ -105,9 +109,24 @@ func (ui *Ui) View() string {
 	}
 	output += "Connecting to Kubernetes\n"
 
-	title := "Setup Cluster Proxies"
+	title := "Restart Cluster Nodes"
+	if ui.Current < -2 {
+		output += scheduled.Render(" . " + title)
+	} else if ui.Current == -1 {
+		if ui.err == nil {
+			output += ui.spinner.View()
+		} else {
+			output += failed
+		}
+		output += title
+	} else {
+		output += done + title
+	}
+	output += "\n"
+
+	title = "Setup Cluster Proxies"
 	if ui.Current < -1 {
-		output += scheduled.Render("   " + title)
+		output += scheduled.Render(" . " + title)
 	} else if ui.Current == -1 {
 		if ui.err == nil {
 			output += ui.spinner.View()
