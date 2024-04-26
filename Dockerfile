@@ -1,12 +1,13 @@
-ARG GO_VERSION=1.22.1
-
+ARG GO_VERSION=1.22.2
 FROM golang:${GO_VERSION} AS builder
 ARG TARGET
 
 RUN mkdir /project
 COPY ./storage /project/storage
 COPY ./raft /project/raft
-COPY ./go.work ./go.work.sum /project
+COPY ./tester /project/tester
+COPY ./go.work /project
+
 WORKDIR /project
 RUN go mod download
 RUN mkdir out
