@@ -1,0 +1,23 @@
+@go.Package { name = "github.com/robert-oleynik/k8s-playground/tester/config" }
+module robert_oleynik.k8s_playground.tester.config;
+
+import "package://pkg.pkl-lang.org/pkl-go/pkl.golang@0.6.0#/go.pkl"
+
+class KubernetesConfig {
+	config_path: String = read("env:HOME") + "/.kube/config"
+	namespace: String
+}
+
+class RaftClusterConfig {
+	cluster_name: String
+	default_port: String = "http"
+	service_name: String
+}
+
+class TesterConfig {
+	proxy_port_begin: Int = 10000
+}
+
+kubernetes: KubernetesConfig
+raft: RaftClusterConfig
+tester: TesterConfig

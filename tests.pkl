@@ -1,0 +1,10 @@
+amends "./tester/conf.schema.pkl"
+
+kubernetes {
+	namespace = "playground"
+}
+
+raft {
+	cluster_name = "storage"
+	service_name = "storage"
+}
