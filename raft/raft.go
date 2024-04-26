@@ -410,10 +410,7 @@ func (raft *Raft[T]) AppendEntries(req AppendEntriesRequest[T], reply *Reply) er
 
 	if err := raft.Log.Append(req.PrevLogIndex, req.Entries); err != nil {
 		zap.L().Error("raft: log append entries", zap.Error(err))
-	}
-
-	// TODO: Detect commited index by peers not by reading log information
-	if req.LeaderCommit > raft.Log.CommitedIndex() {
+	} else if req.LeaderCommit > raft.Log.CommitedIndex() {
 		logs, err := raft.Log.Commit(req.LeaderCommit)
 		if err != nil {
 			zap.L().Error("commit failed", zap.Error(err))

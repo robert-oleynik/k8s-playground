@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+
+	"go.uber.org/zap"
 )
 
 type Log[T interface{}] interface {
@@ -61,12 +63,19 @@ func (log *MemoryLog[T]) Append(i uint64, entries []LogEntry[T]) error {
 }
 
 func (log *MemoryLog[T]) Commit(logIndex uint64) ([]LogEntry[T], error) {
+	zap.L().Debug("commit",
+		zap.Uint64("commited", log.Commited),
+		zap.Uint64("index", logIndex),
+		zap.Int("count", len(log.Entries)))
 	var commited []LogEntry[T]
 	log.mtx.Lock()
 	defer log.mtx.Unlock()
-	commitedIndex := min(uint64(len(log.Entries)), logIndex)
-	commited = log.Entries[log.Commited:int(logIndex)]
-	log.Commited = commitedIndex
+	if logIndex <= log.Commited {
+		return []LogEntry[T]{}, nil
+	}
+	commit := min(uint64(len(log.Entries)), logIndex)
+	commited = log.Entries[log.Commited:commit]
+	log.Commited = commit
 	return commited, nil
 }
 

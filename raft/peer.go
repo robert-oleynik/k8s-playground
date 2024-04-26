@@ -109,11 +109,21 @@ outer:
 				if len(args.Entries) > 0 {
 					peer.logIndex = args.Entries[len(args.Entries)-1].LogIndex
 					peer.logTerm = args.Entries[len(args.Entries)-1].Term
+					zap.L().Debug("raft: peer successfully replicated",
+						zap.Uint32("leaderTerm", raft.term),
+						zap.Uint32("leaderId", raft.Id),
+						zap.Uint32("peerId", peer.Id),
+						zap.Uint32("logTerm", peer.logTerm),
+						zap.Uint64("logIndex", peer.logIndex))
 				}
 				continue outer
 			}
 			old := peer.logIndex
 			// TODO: Fetch previous index from log
+			if args.PrevLogIndex == 0 {
+				zap.L().Warn("raft: failed to decrease log index")
+				continue outer
+			}
 			peer.logIndex = args.PrevLogIndex - 1
 			term, err := raft.Log.Term(peer.logIndex)
 			if err != nil {
@@ -122,6 +132,13 @@ outer:
 				continue outer
 			}
 			peer.logTerm = term
+
+			zap.L().Debug("raft: peer replicated failed",
+				zap.Uint32("leaderTerm", raft.term),
+				zap.Uint32("leaderId", raft.Id),
+				zap.Uint32("peerId", peer.Id),
+				zap.Uint32("logTerm", peer.logTerm),
+				zap.Uint64("logIndex", peer.logIndex))
 		}
 	}
 }
@@ -186,20 +203,11 @@ func (raft *Raft[T]) HandlePeer(peer *Peer, replicate chan struct{}) {
 				return
 			}
 
-			if len(entries) > 0 {
-				zap.L().Debug("raft: replicate peer",
-					zap.Uint32("leaderTerm", raft.term),
-					zap.Uint32("leaderId", raft.Id),
-					zap.Uint32("peerId", peer.Id),
-					zap.Uint32("logTerm", logTerm),
-					zap.Uint64("logIndex", logIndex),
-					zap.Int("count", len(entries)))
-			}
 			arg := AppendEntriesRequest[T]{
 				Term:         raft.term,
 				LeaderId:     raft.Id,
-				PrevLogTerm:  logTerm,
-				PrevLogIndex: logIndex,
+				PrevLogTerm:  peer.logTerm,
+				PrevLogIndex: peer.logIndex,
 				Entries:      entries,
 				LeaderCommit: raft.commited,
 			}
