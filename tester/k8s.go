@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"time"
@@ -50,6 +51,23 @@ func k8sRestartCluster(client *kubernetes.Clientset, conf *config.Config) tea.Cm
 		}
 		time.Sleep(3 * time.Second)
 		return client
+	}
+}
+
+type Ready struct{}
+
+func clusterBecomesReady(ctx context.Context, peerSet PeerSet) tea.Cmd {
+	return func() tea.Msg {
+		peerSet.CheckReplication(ctx, 10*time.Millisecond, func(peer *Peer, ctx context.Context) (Reply, error) {
+			ok, err := peer.Healthy(ctx)
+			if err != nil {
+				return Reply{}, err
+			} else if !ok {
+				return Reply{}, errors.New("not ready yet")
+			}
+			return Reply{}, nil
+		})
+		return Ready{}
 	}
 }
 

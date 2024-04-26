@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -29,7 +31,7 @@ func Init(conf *config.Config) *Ui {
 		PaddingRight(0).
 		MarginRight(0)
 	return &Ui{
-		Current:     -3,
+		Current:     -4,
 		TestCases:   []TestCase{},
 		TestReports: []*TestReport{},
 		Tester:      nil,
@@ -56,14 +58,18 @@ func (ui *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case *kubernetes.Clientset:
 		ui.Current++
-		if ui.Current == -2 {
+		if ui.Current == -3 {
 			return ui, k8sRestartCluster(msg, ui.Config)
-		} else {
+		} else if ui.Current == -2 {
 			return ui, k8sConnectPeers(msg, ui.Config)
 		}
 	case []NodeProxy:
 		ui.Tester = NewTester(msg...)
-		ui.Current++
+		ui.Current = -1
+		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+		return ui, clusterBecomesReady(ctx, ui.Tester.ClusterNodes)
+	case Ready:
+		ui.Current = 0
 		return ui, ui.RunTest()
 	case *TestReport:
 		ui.TestReports[ui.Current] = msg
@@ -98,7 +104,7 @@ func (ui *Ui) View() string {
 	scheduled := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("8"))
 	output := "\n"
-	if ui.Current == -3 {
+	if ui.Current == -4 {
 		if ui.err == nil {
 			output += ui.spinner.View()
 		} else {
@@ -110,9 +116,9 @@ func (ui *Ui) View() string {
 	output += "Connecting to Kubernetes\n"
 
 	title := "Restart Cluster Nodes"
-	if ui.Current < -2 {
+	if ui.Current < -3 {
 		output += scheduled.Render(" . " + title)
-	} else if ui.Current == -1 {
+	} else if ui.Current == -3 {
 		if ui.err == nil {
 			output += ui.spinner.View()
 		} else {
@@ -125,6 +131,21 @@ func (ui *Ui) View() string {
 	output += "\n"
 
 	title = "Setup Cluster Proxies"
+	if ui.Current < -2 {
+		output += scheduled.Render(" . " + title)
+	} else if ui.Current == -2 {
+		if ui.err == nil {
+			output += ui.spinner.View()
+		} else {
+			output += failed
+		}
+		output += title
+	} else {
+		output += done + title
+	}
+	output += "\n"
+
+	title = "Wait for Cluster to become ready"
 	if ui.Current < -1 {
 		output += scheduled.Render(" . " + title)
 	} else if ui.Current == -1 {

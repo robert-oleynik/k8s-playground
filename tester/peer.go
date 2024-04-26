@@ -28,6 +28,20 @@ func NewPeer(base string, port uint16) Peer {
 	return Peer{base, port}
 }
 
+func (peer Peer) Healthy(ctx context.Context) (bool, error) {
+	url := fmt.Sprintf("http://%s:%d/health", peer.host, peer.port)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return false, fmt.Errorf("http request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == 200, nil
+}
+
 func (peer Peer) Get(ctx context.Context, id string) (Reply, error) {
 	var reply Reply
 	reply.id = id
@@ -136,22 +150,20 @@ func (peer Peer) Delete(ctx context.Context, id string) (Reply, error) {
 	return reply, nil
 }
 
-type CheckReplicationConfig struct {
-	ValidationInterval time.Duration
-}
-
 type ReplicationStats struct {
 	ok    bool
 	rtts  []time.Duration
 	total time.Duration
 }
 
-func (peerSet PeerSet) CheckReplication(ctx context.Context, conf CheckReplicationConfig, testFn func(peer *Peer, ctx context.Context) (Reply, error)) []ReplicationStats {
+func (peerSet PeerSet) CheckReplication(ctx context.Context, fetchInt time.Duration, testFn func(peer *Peer, ctx context.Context) (Reply, error)) []ReplicationStats {
 	results := make([]ReplicationStats, len(peerSet))
 	wg := &sync.WaitGroup{}
 	wg.Add(len(peerSet))
 	for i, peer := range peerSet {
-		timer := time.NewTicker(conf.ValidationInterval)
+		timer := time.NewTicker(fetchInt)
+		i := i
+		peer := &peer
 		go func() {
 			defer wg.Done()
 			start := time.Now()
@@ -166,7 +178,7 @@ func (peerSet PeerSet) CheckReplication(ctx context.Context, conf CheckReplicati
 					return
 				case <-timer.C:
 				}
-				resp, err := testFn(&peer, ctx)
+				resp, err := testFn(peer, ctx)
 				if resp.rtt > 0 {
 					results[i].rtts = append(results[i].rtts, resp.rtt)
 				}
