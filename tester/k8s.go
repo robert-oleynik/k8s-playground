@@ -49,16 +49,16 @@ func k8sRestartCluster(client *kubernetes.Clientset, conf *config.Config) tea.Cm
 		if err != nil {
 			return fmt.Errorf("k8s: delete pods: %w", err)
 		}
-		time.Sleep(3 * time.Second)
+		time.Sleep(5 * time.Second)
 		return client
 	}
 }
 
-type Ready struct{}
+type Ready bool
 
 func clusterBecomesReady(ctx context.Context, peerSet PeerSet) tea.Cmd {
 	return func() tea.Msg {
-		peerSet.CheckReplication(ctx, 10*time.Millisecond, func(peer *Peer, ctx context.Context) (Reply, error) {
+		stats := peerSet.CheckReplication(ctx, 10*time.Millisecond, func(peer *Peer, ctx context.Context) (Reply, error) {
 			ok, err := peer.Healthy(ctx)
 			if err != nil {
 				return Reply{}, err
@@ -67,7 +67,15 @@ func clusterBecomesReady(ctx context.Context, peerSet PeerSet) tea.Cmd {
 			}
 			return Reply{}, nil
 		})
-		return Ready{}
+		if len(stats) == 0 {
+			return Ready(false)
+		}
+		for _, stat := range stats {
+			if !stat.ok {
+				return Ready(false)
+			}
+		}
+		return Ready(true)
 	}
 }
 

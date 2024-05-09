@@ -69,6 +69,10 @@ func (ui *Ui) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
 		return ui, clusterBecomesReady(ctx, ui.Tester.ClusterNodes)
 	case Ready:
+		if !msg {
+			ui.err = errors.New("cluster not ready")
+			return ui, tea.Quit
+		}
 		ui.Current = 0
 		return ui, ui.RunTest()
 	case *TestReport:
